@@ -2,6 +2,8 @@
 
 import { connectToDatabase } from '@/database/mongoose';
 import { Watchlist } from '@/database/models/watchlist.model';
+import { auth } from '@/lib/better-auth/auth';
+import { headers } from 'next/headers';
 
 export async function getWatchlistSymbolsByEmail(email: string): Promise<string[]> {
   if (!email) return [];
@@ -24,5 +26,119 @@ export async function getWatchlistSymbolsByEmail(email: string): Promise<string[
   } catch (err) {
     console.error('getWatchlistSymbolsByEmail error:', err);
     return [];
+  }
+}
+
+export async function getUserWatchlist() {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user?.id) {
+      return { success: false, error: 'User not authenticated' };
+    }
+
+    await connectToDatabase();
+    const items = await Watchlist.find({ userId: session.user.id })
+      .sort({ addedAt: -1 })
+      .lean();
+
+    return {
+      success: true,
+      data: items.map((item) => ({
+        id: item._id.toString(),
+        symbol: item.symbol,
+        company: item.company,
+        addedAt: item.addedAt.toISOString(),
+      })),
+    };
+  } catch (err) {
+    console.error('getUserWatchlist error:', err);
+    return { success: false, error: 'Failed to fetch watchlist' };
+  }
+}
+
+export async function addToWatchlist(symbol: string, company: string) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user?.id) {
+      return { success: false, error: 'User not authenticated' };
+    }
+
+    await connectToDatabase();
+
+    // Check if already exists
+    const existing = await Watchlist.findOne({
+      userId: session.user.id,
+      symbol: symbol.toUpperCase(),
+    });
+
+    if (existing) {
+      return { success: false, error: 'Stock already in watchlist' };
+    }
+
+    const watchlistItem = await Watchlist.create({
+      userId: session.user.id,
+      symbol: symbol.toUpperCase(),
+      company,
+      addedAt: new Date(),
+    });
+
+    return {
+      success: true,
+      data: {
+        id: String(watchlistItem._id),
+        symbol: watchlistItem.symbol,
+        company: watchlistItem.company,
+        addedAt: watchlistItem.addedAt.toISOString(),
+      },
+    };
+  } catch (err) {
+    console.error('addToWatchlist error:', err);
+    return { success: false, error: 'Failed to add to watchlist' };
+  }
+}
+
+export async function removeFromWatchlist(symbol: string) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user?.id) {
+      return { success: false, error: 'User not authenticated' };
+    }
+
+    await connectToDatabase();
+
+    const result = await Watchlist.deleteOne({
+      userId: session.user.id,
+      symbol: symbol.toUpperCase(),
+    });
+
+    if (result.deletedCount === 0) {
+      return { success: false, error: 'Stock not found in watchlist' };
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error('removeFromWatchlist error:', err);
+    return { success: false, error: 'Failed to remove from watchlist' };
+  }
+}
+
+export async function isInWatchlist(symbol: string) {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user?.id) {
+      return false;
+    }
+
+    await connectToDatabase();
+
+    const item = await Watchlist.findOne({
+      userId: session.user.id,
+      symbol: symbol.toUpperCase(),
+    });
+
+    return !!item;
+  } catch (err) {
+    console.error('isInWatchlist error:', err);
+    return false;
   }
 }
